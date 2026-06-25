@@ -1,10 +1,8 @@
 using Rocket.API;
-using Rocket.Core.Commands;
 using Rocket.Core.Logging;
 using Rocket.Core.Plugins;
 using Rocket.Unturned.Player;
 using SDG.Unturned;
-using Steamworks;
 using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
@@ -18,8 +16,6 @@ namespace InventorySorter
         protected override void Load()
         {
             Instance = this;
-            RocketCommandManager.RegisterCommand(this, new SortInvCommand());
-            RocketCommandManager.RegisterCommand(this, new SortStorageCommand());
             Logger.Log("InventorySorter loaded! /sortinv | /sortstorage");
         }
 
@@ -43,10 +39,12 @@ namespace InventorySorter
                 if (storage != null)
                 {
                     SortStorage(storage);
+                    ChatManager.serverSendMessage("Storage sorted!", Color.green, null, player.SteamPlayer(), EChatMode.SAY, null, true);
                 }
                 else
                 {
                     SortBackpack(p);
+                    ChatManager.serverSendMessage("Backpack sorted!", Color.green, null, player.SteamPlayer(), EChatMode.SAY, null, true);
                 }
             }
             else if (command == "sortstorage")
@@ -81,24 +79,17 @@ namespace InventorySorter
             {
                 snapshots.Add(new ItemSnapshot(jar));
                 int index = storageItems.items.IndexOf(jar);
-                if (index >= 0)
-                {
-                    storageItems.removeItem((byte)index);
-                }
+                if (index >= 0) storageItems.removeItem((byte)index);
             }
 
-            // 排序
             snapshots = SortSnapshots(snapshots);
+            List<ItemSnapshot> remaining = PlaceInStorage(storageItems, snapshots);
 
-            // 放回存储容器
-            List<ItemSnapshot> remaining = PlaceInItems(storageItems, snapshots);
-
-            // 剩余放入背包
+            // 放不下的回到玩家背包
             if (remaining.Count > 0 && player != null)
             {
-                List<ItemSnapshot> backpackRemaining = PlaceInBackpack(player, remaining);
-
-                foreach (var snap in backpackRemaining)
+                List<ItemSnapshot> leftover = PlaceInBackpack(player, remaining);
+                foreach (var snap in leftover)
                 {
                     DropItem(player, snap.Item);
                 }
@@ -108,11 +99,10 @@ namespace InventorySorter
         public void SortBackpack(Player player)
         {
             if (player == null) return;
-
             List<ItemSnapshot> snapshots = new List<ItemSnapshot>();
 
-            // 收集所有背包页面的物品
-            for (byte page = PlayerInventory.SLOTS; page < PlayerInventory.STORAGE; page++)
+            // 从第 1 页开始遍历（跳过装备页）
+            for (byte page = 1; page < player.inventory.items.Length; page++)
             {
                 Items pageItems = player.inventory.items[page];
                 if (pageItems == null) continue;
@@ -122,18 +112,13 @@ namespace InventorySorter
                 {
                     snapshots.Add(new ItemSnapshot(jar, page));
                     int index = pageItems.items.IndexOf(jar);
-                    if (index >= 0)
-                    {
-                        pageItems.removeItem((byte)index);
-                    }
+                    if (index >= 0) pageItems.removeItem((byte)index);
                 }
             }
 
-            // 排序并放回
             snapshots = SortSnapshots(snapshots);
             List<ItemSnapshot> remaining = PlaceInBackpack(player, snapshots);
 
-            // 放不下的丢弃
             foreach (var snap in remaining)
             {
                 DropItem(player, snap.Item);
@@ -142,117 +127,97 @@ namespace InventorySorter
 
         // ==================== 排序逻辑 ====================
 
-        private List<ItemSnapshot> SortSnapshots(List<ItemSnapshot> snaps)
+        private List<ItemSnapshot> SortSnapshots(List<ItemSnapshot> snapshots)
         {
-            return snaps.OrderBy(s =>
-            {
-                if (s.Item == null) return 0;
-                return s.Item.id;
-            }).ThenBy(s =>
-            {
-                return s.Item != null ? s.Item.amount : (byte)0;
-            }).ToList();
+            return snapshots
+                .OrderBy(s => s.Item != null ? s.Item.id : (ushort)0)
+                .ThenBy(s => s.Item != null ? s.Item.amount : (byte)0)
+                .ToList();
         }
 
-        // ==================== 放置逻辑 ====================
+        // ==================== 放回背包 ====================
 
-        private List<ItemSnapshot> PlaceInBackpack(Player player, List<ItemSnapshot> snaps)
-        {
-            List<ItemSnapshot> remaining = new List<ItemSnapshot>(snaps);
-
-            for (byte page = PlayerInventory.SLOTS; page < PlayerInventory.STORAGE; page++)
-            {
-                Items pageItems = player.inventory.items[page];
-                if (pageItems == null) continue;
-
-                List<ItemSnapshot> stillRemaining = new List<ItemSnapshot>();
-                foreach (var snap in remaining)
-                {
-                    if (!TryAddToItems(pageItems, snap))
-                    {
-                        stillRemaining.Add(snap);
-                    }
-                }
-                remaining = stillRemaining;
-                if (remaining.Count == 0) break;
-            }
-
-            return remaining;
-        }
-
-        private List<ItemSnapshot> PlaceInItems(Items items, List<ItemSnapshot> snaps)
+        private List<ItemSnapshot> PlaceInBackpack(Player player, List<ItemSnapshot> snapshots)
         {
             List<ItemSnapshot> remaining = new List<ItemSnapshot>();
-            foreach (var snap in snaps)
+
+            foreach (var snap in snapshots)
             {
-                if (!TryAddToItems(items, snap))
+                bool placed = false;
+
+                for (byte page = 1; page < player.inventory.items.Length && !placed; page++)
                 {
-                    remaining.Add(snap);
+                    Items items = player.inventory.items[page];
+                    if (items == null) continue;
+
+                    for (byte y = 0; y < items.height && !placed; y++)
+                    {
+                        for (byte x = 0; x < items.width && !placed; x++)
+                        {
+                            if (IsSlotFree(items, x, y, snap.SizeX, snap.SizeY, snap.Rot))
+                            {
+                                items.addItem(x, y, snap.Rot, snap.Item);
+                                placed = true;
+                            }
+                        }
+                    }
                 }
+
+                if (!placed) remaining.Add(snap);
             }
+
             return remaining;
         }
 
-        private bool TryAddToItems(Items items, ItemSnapshot snap)
+        // ==================== 放回存储容器 ====================
+
+        private List<ItemSnapshot> PlaceInStorage(Items container, List<ItemSnapshot> snapshots)
         {
-            for (byte y = 0; y < items.height; y++)
+            List<ItemSnapshot> remaining = new List<ItemSnapshot>();
+
+            foreach (var snap in snapshots)
             {
-                for (byte x = 0; x < items.width; x++)
+                bool placed = false;
+
+                for (byte y = 0; y < container.height && !placed; y++)
                 {
-                    if (IsPositionFree(items, (byte)x, (byte)y, snap.SizeX, snap.SizeY, snap.Rot))
+                    for (byte x = 0; x < container.width && !placed; x++)
                     {
-                        items.addItem((byte)x, (byte)y, snap.Rot, snap.Item);
-                        return true;
+                        if (IsSlotFree(container, x, y, snap.SizeX, snap.SizeY, snap.Rot))
+                        {
+                            container.addItem(x, y, snap.Rot, snap.Item);
+                            placed = true;
+                        }
                     }
                 }
+
+                if (!placed) remaining.Add(snap);
             }
-            return false;
+
+            return remaining;
         }
 
         // ==================== 辅助方法 ====================
 
-        private InteractableStorage GetOpenStorage(Player player)
+        private bool IsSlotFree(Items items, byte px, byte py, byte sx, byte sy, byte rot)
         {
-            if (player == null) return null;
+            byte w = (rot == 1) ? sy : sx;
+            byte h = (rot == 1) ? sx : sy;
 
-            // 尝试通过 Player 的交互对象检测
-            try
+            if (px + w > items.width || py + h > items.height) return false;
+
+            for (byte dy = 0; dy < h; dy++)
             {
-                Interactable interactable = player.interactable;
-                if (interactable != null && interactable is InteractableStorage)
+                for (byte dx = 0; dx < w; dx++)
                 {
-                    InteractableStorage storage = interactable as InteractableStorage;
-                    if (storage != null && storage.isOpen && storage.opener == player)
+                    foreach (var jar in items.items)
                     {
-                        return storage;
-                    }
-                }
-            }
-            catch { }
-
-            return null;
-        }
-
-        private bool IsPositionFree(Items items, byte x, byte y, byte sizeX, byte sizeY, byte rot)
-        {
-            byte w = rot == 1 ? sizeY : sizeX;
-            byte h = rot == 1 ? sizeX : sizeY;
-
-            if ((byte)(x + w) > items.width || (byte)(y + h) > items.height) return false;
-
-            foreach (var jar in items.items)
-            {
-                byte jarW = jar.rot == 1 ? jar.size_y : jar.size_x;
-                byte jarH = jar.rot == 1 ? jar.size_x : jar.size_y;
-
-                for (byte dy = 0; dy < h; dy++)
-                {
-                    for (byte dx = 0; dx < w; dx++)
-                    {
-                        byte checkX = (byte)(x + dx);
-                        byte checkY = (byte)(y + dy);
-                        if (checkX >= jar.x && checkX < (byte)(jar.x + jarW) &&
-                            checkY >= jar.y && checkY < (byte)(jar.y + jarH))
+                        byte jw = (jar.rot == 1) ? jar.size_y : jar.size_x;
+                        byte jh = (jar.rot == 1) ? jar.size_x : jar.size_y;
+                        byte cx = (byte)(px + dx);
+                        byte cy = (byte)(py + dy);
+                        if (cx >= jar.x && cx < jar.x + jw &&
+                            cy >= jar.y && cy < jar.y + jh)
                         {
                             return false;
                         }
@@ -265,10 +230,9 @@ namespace InventorySorter
         private void DropItem(Player player, Item item)
         {
             if (item == null || player == null) return;
-
             Vector3 pos = player.transform.position;
             pos.y += 1f;
-            ItemManager.dropItem(item, pos, true, false, true);
+            ItemManager.dropItem(item, pos, true, true, true);
         }
     }
 
@@ -333,4 +297,3 @@ namespace InventorySorter
         }
     }
 }
-
