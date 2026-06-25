@@ -31,7 +31,15 @@ namespace InventorySorter
         {
             if (player == null) return;
             Player p = player.Player;
-            if (p == null) return;
+            if (p == null)
+            {
+                Rocket.Core.Logging.Logger.Log("[DEBUG] ExecuteCommand: player.Player is null");
+                return;
+            }
+
+            ChatManager.serverSendMessage(
+                "[DEBUG] 收到命令: " + command, Color.yellow, null, player.SteamPlayer(),
+                EChatMode.SAY, null, true);
 
             InteractableStorage storage = GetOpenStorage(p);
 
@@ -39,6 +47,9 @@ namespace InventorySorter
             {
                 if (storage != null)
                 {
+                    ChatManager.serverSendMessage(
+                        "[DEBUG] 检测到打开存储容器，改为整理容器", Color.yellow, null, player.SteamPlayer(),
+                        EChatMode.SAY, null, true);
                     SortStorage(storage);
                 }
                 else
@@ -58,12 +69,16 @@ namespace InventorySorter
                     ChatManager.serverSendMessage("No storage open!", Color.red, null, player.SteamPlayer(), EChatMode.SAY, null, true);
                 }
             }
+            else if (command == "debuginv")
+            {
+                DebugInventory(player, p);
+            }
         }
 
         private InteractableStorage GetOpenStorage(Player player)
         {
             if (player == null) return null;
-            Interactable interactable = player.Player.interactable;
+            Interactable interactable = player.player.interactable;
             if (interactable != null && interactable is InteractableStorage)
             {
                 InteractableStorage storage = interactable as InteractableStorage;
@@ -250,6 +265,55 @@ namespace InventorySorter
             pos.y += 1f;
             ItemManager.dropItem(item, pos, true, false, true);
         }
+
+        // ==================== 调试方法 ====================
+
+        private void DebugInventory(UnturnedPlayer unturnedPlayer, Player player)
+        {
+            ChatManager.serverSendMessage(
+                "[DEBUG] === 背包状态 ===", Color.cyan, null, unturnedPlayer.SteamPlayer(),
+                EChatMode.SAY, null, true);
+
+            ChatManager.serverSendMessage(
+                "[DEBUG] 总页数: " + player.inventory.items.Length, Color.cyan, null, unturnedPlayer.SteamPlayer(),
+                EChatMode.SAY, null, true);
+
+            int totalItems = 0;
+            for (byte page = 0; page < player.inventory.items.Length; page++)
+            {
+                Items pageItems = player.inventory.items[page];
+                if (pageItems == null)
+                {
+                    ChatManager.serverSendMessage(
+                        "[DEBUG] 页" + page + ": NULL", Color.cyan, null, unturnedPlayer.SteamPlayer(),
+                        EChatMode.SAY, null, true);
+                    continue;
+                }
+                int count = pageItems.items.Count;
+                totalItems += count;
+                ChatManager.serverSendMessage(
+                    "[DEBUG] 页" + page + " (" + pageItems.width + "x" + pageItems.height + "): " + count + " 物品", Color.cyan, null, unturnedPlayer.SteamPlayer(),
+                    EChatMode.SAY, null, true);
+            }
+
+            ChatManager.serverSendMessage(
+                "[DEBUG] 总物品数: " + totalItems, Color.cyan, null, unturnedPlayer.SteamPlayer(),
+                EChatMode.SAY, null, true);
+
+            // 检查存储容器
+            Interactable interactable = player.player.interactable;
+            ChatManager.serverSendMessage(
+                "[DEBUG] player.player.interactable: " + (interactable == null ? "null" : interactable.GetType().Name), Color.cyan, null, unturnedPlayer.SteamPlayer(),
+                EChatMode.SAY, null, true);
+
+            if (interactable is InteractableStorage)
+            {
+                InteractableStorage storage = interactable as InteractableStorage;
+                ChatManager.serverSendMessage(
+                    "[DEBUG] 存储容器: isOpen=" + storage.isOpen + " opener=" + (storage.opener == player ? "自己" : "他人"), Color.cyan, null, unturnedPlayer.SteamPlayer(),
+                    EChatMode.SAY, null, true);
+            }
+        }
     }
 
     // ==================== 物品快照 ====================
@@ -308,6 +372,25 @@ namespace InventorySorter
             if (player != null && Main.Instance != null)
             {
                 Main.Instance.ExecuteCommand(player, "sortstorage");
+            }
+        }
+    }
+
+    public class DebugInvCommand : IRocketCommand
+    {
+        public AllowedCaller AllowedCaller { get { return AllowedCaller.Player; } }
+        public string Name { get { return "debuginv"; } }
+        public string Help { get { return "Show inventory debug info"; } }
+        public string Syntax { get { return ""; } }
+        public List<string> Aliases { get { return new List<string> { "di" }; } }
+        public List<string> Permissions { get { return new List<string>(); } }
+
+        public void Execute(IRocketPlayer caller, string[] command)
+        {
+            UnturnedPlayer player = caller as UnturnedPlayer;
+            if (player != null && Main.Instance != null)
+            {
+                Main.Instance.ExecuteCommand(player, "debuginv");
             }
         }
     }
