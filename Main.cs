@@ -25,7 +25,7 @@ namespace InventorySorter
             Player.onPlayerCreated -= OnPlayerCreated;
             foreach (SteamPlayer sp in Provider.clients)
             {
-                if (sp?.player?.equipment != null)
+                if (sp != null && sp.player != null && sp.player.equipment != null)
                 {
                     sp.player.equipment.onEquipRequested -= OnEquipRequested;
                 }
@@ -38,7 +38,7 @@ namespace InventorySorter
 
         private void OnPlayerCreated(Player player)
         {
-            if (player?.equipment != null)
+            if (player != null && player.equipment != null)
             {
                 player.equipment.onEquipRequested += OnEquipRequested;
             }
