@@ -17,17 +17,32 @@ namespace InventorySorter
         {
             Instance = this;
             Rocket.Core.Logging.Logger.Log("InventorySorter loaded! Caps/Hands = sort | /sortinv");
-            PlayerEquipment.onEquipRequested += OnEquipRequested;
+            Player.onPlayerCreated += OnPlayerCreated;
         }
 
         protected override void Unload()
         {
-            PlayerEquipment.onEquipRequested -= OnEquipRequested;
+            Player.onPlayerCreated -= OnPlayerCreated;
+            foreach (SteamPlayer sp in Provider.clients)
+            {
+                if (sp?.player?.equipment != null)
+                {
+                    sp.player.equipment.onEquipRequested -= OnEquipRequested;
+                }
+            }
             Instance = null;
             Rocket.Core.Logging.Logger.Log("InventorySorter unloaded!");
         }
 
         // ==================== 手上物品 = 整理触发器 ====================
+
+        private void OnPlayerCreated(Player player)
+        {
+            if (player?.equipment != null)
+            {
+                player.equipment.onEquipRequested += OnEquipRequested;
+            }
+        }
 
         private void OnEquipRequested(PlayerEquipment equipment, ItemJar jar, ItemAsset asset, ref bool shouldAllow)
         {
