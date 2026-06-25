@@ -16,25 +16,23 @@ namespace InventorySorter
         protected override void Load()
         {
             Instance = this;
-            Logger.Log("InventorySorter loaded! Key: F4 | /sortinv /sortstorage");
+            Rocket.Core.Logging.Logger.Log("InventorySorter loaded! F4 = sort | /sortinv /sortstorage");
+            PlayerInput.onPluginKeyTick += OnPluginKeyTick;
         }
 
         protected override void Unload()
         {
+            PlayerInput.onPluginKeyTick -= OnPluginKeyTick;
             Instance = null;
-            Logger.Log("InventorySorter unloaded!");
+            Rocket.Core.Logging.Logger.Log("InventorySorter unloaded!");
         }
 
-        // ==================== 按键触发 ====================
+        // ==================== F4 按键触发（所有玩家通用） ====================
 
-        void Update()
+        private void OnPluginKeyTick(Player player, uint simulation, byte key, bool state)
         {
-            // F4 键触发（仅本地/监听服务器有效，专用服务器无效）
-            if (!Input.GetKeyDown(KeyCode.F4) || Provider.isPvP) return;
-
-            Player player = Player.player;
+            if (key != 4 || !state) return; // key=4 = F4
             if (player == null) return;
-
             TriggerSort(player);
         }
 
