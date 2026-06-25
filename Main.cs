@@ -25,135 +25,160 @@ namespace InventorySorter
             Logger.Log("InventorySorter unloaded!");
         }
 
+        // ==================== 命令入口 ====================
+
         public void ExecuteCommand(UnturnedPlayer player, string command)
         {
             if (player == null) return;
             Player p = player.Player;
             if (p == null) return;
 
-            if (p.interactableStorage != null)
+            InteractableStorage storage = GetOpenStorage(p);
+
+            if (command == "sortinv")
             {
-                SortStorage(p);
+                if (storage != null)
+                {
+                    SortStorage(storage);
+                }
+                else
+                {
+                    SortBackpack(p);
+                }
             }
-            else
+            else if (command == "sortstorage")
             {
-                SortBackpack(p);
+                if (storage != null)
+                {
+                    SortStorage(storage);
+                    ChatManager.serverSendMessage("Storage sorted!", Color.green, null, player.SteamPlayer(), EChatMode.SAY, null, true);
+                }
+                else
+                {
+                    ChatManager.serverSendMessage("No storage open!", Color.red, null, player.SteamPlayer(), EChatMode.SAY, null, true);
+                }
             }
+        }
+
+        private InteractableStorage GetOpenStorage(Player player)
+        {
+            if (player == null) return null;
+            Interactable interactable = player.interactable;
+            if (interactable != null && interactable is InteractableStorage)
+            {
+                InteractableStorage storage = interactable as InteractableStorage;
+                if (storage != null && storage.isOpen && storage.opener == player)
+                {
+                    return storage;
+                }
+            }
+            return null;
         }
 
         // ==================== 背包排序 ====================
 
         public void SortBackpack(Player player)
         {
-            PlayerInventory inventory = player.inventory;
-            List<ItemJar> items = new List<ItemJar>();
+            List<ItemSnapshot> snapshots = new List<ItemSnapshot>();
 
-            for (byte page = 0; page < PlayerInventory.PAGES; page++)
+            // 从第 1 页开始遍历（跳过装备页）
+            for (byte page = 1; page < player.inventory.items.Length; page++)
             {
-                if (page == PlayerInventory.SPECIAL) continue;
+                Items pageItems = player.inventory.items[page];
+                if (pageItems == null) continue;
 
-                for (byte y = 0; y < PlayerInventory.HEIGHT; y++)
+                foreach (var jar in pageItems.items.ToList())
                 {
-                    for (byte x = 0; x < PlayerInventory.WIDTH; x++)
-                    {
-                        ItemJar jar = inventory.getItem(page, x, y);
-                        if (jar != null)
-                        {
-                            items.Add(new ItemJar(jar.item, jar.x, jar.y));
-                            inventory.removeItem(page, x, y);
-                        }
-                    }
+                    snapshots.Add(new ItemSnapshot(jar, page));
+                    int index = pageItems.items.IndexOf(jar);
+                    if (index >= 0) pageItems.removeItem((byte)index);
                 }
             }
 
-            items = SortItems(items);
-            List<ItemJar> remaining = PlaceItemsBack(inventory, items);
+            snapshots = SortSnapshots(snapshots);
+            List<ItemSnapshot> remaining = PlaceInBackpack(player, snapshots);
 
-            foreach (var jar in remaining)
+            foreach (var snap in remaining)
             {
-                DropItem(player, jar.item);
+                DropItem(player, snap.Item);
             }
         }
 
         // ==================== 存储容器排序 ====================
 
-        public void SortStorage(Player player)
+        public void SortStorage(InteractableStorage storage)
         {
-            InteractableStorage storage = player.interactableStorage;
-            PlayerInventory inventory = player.inventory;
-            List<ItemJar> items = new List<ItemJar>();
+            Items container = storage.items;
+            Player player = storage.opener;
+            List<ItemSnapshot> snapshots = new List<ItemSnapshot>();
 
-            for (byte y = 0; y < storage.height; y++)
+            foreach (var jar in container.items.ToList())
             {
-                for (byte x = 0; x < storage.width; x++)
-                {
-                    ItemJar jar = storage.getItem(x, y);
-                    if (jar != null)
-                    {
-                        items.Add(new ItemJar(jar.item, jar.x, jar.y));
-                        storage.removeItem(x, y);
-                    }
-                }
+                snapshots.Add(new ItemSnapshot(jar));
+                int index = container.items.IndexOf(jar);
+                if (index >= 0) container.removeItem((byte)index);
             }
 
-            items = SortItems(items);
-            List<ItemJar> remainingItems = PlaceItemsInStorage(storage, items);
+            snapshots = SortSnapshots(snapshots);
+            List<ItemSnapshot> remaining = PlaceInStorage(container, snapshots);
 
-            if (remainingItems.Count > 0)
+            if (remaining.Count > 0 && player != null)
             {
-                List<ItemJar> backpackRemaining = PlaceItemsBack(inventory, remainingItems);
-
-                foreach (var jar in backpackRemaining)
+                List<ItemSnapshot> backpackRemaining = PlaceInBackpack(player, remaining);
+                foreach (var snap in backpackRemaining)
                 {
-                    DropItem(player, jar.item);
+                    DropItem(player, snap.Item);
                 }
             }
         }
 
         // ==================== 排序逻辑 ====================
 
-        private List<ItemJar> SortItems(List<ItemJar> items)
+        private List<ItemSnapshot> SortSnapshots(List<ItemSnapshot> snapshots)
         {
-            return items.OrderBy(jar =>
+            return snapshots.OrderBy(snap =>
             {
-                if (jar.item == null || jar.item.asset == null) return 0;
-                return jar.item.asset.id;
-            }).ThenBy(jar =>
+                if (snap.Item == null) return 0;
+                ItemAsset asset = (ItemAsset)Assets.find(EAssetType.ITEM, snap.Item.id);
+                return asset != null ? asset.id : 0;
+            }).ThenBy(snap =>
             {
-                if (jar.item == null) return 0;
-                return jar.item.amount;
+                return snap.Item != null ? snap.Item.amount : (byte)0;
             }).ToList();
         }
 
         // ==================== 放回背包 ====================
 
-        private List<ItemJar> PlaceItemsBack(PlayerInventory inventory, List<ItemJar> items)
+        private List<ItemSnapshot> PlaceInBackpack(Player player, List<ItemSnapshot> snapshots)
         {
-            List<ItemJar> remaining = new List<ItemJar>();
+            List<ItemSnapshot> remaining = new List<ItemSnapshot>();
 
-            foreach (var jar in items)
+            foreach (var snap in snapshots)
             {
                 bool placed = false;
 
-                for (byte page = 0; page < PlayerInventory.PAGES && !placed; page++)
+                for (byte page = 1; page < player.inventory.items.Length && !placed; page++)
                 {
-                    if (page == PlayerInventory.SPECIAL) continue;
+                    Items pageItems = player.inventory.items[page];
+                    if (pageItems == null) continue;
 
-                    for (byte y = 0; y < PlayerInventory.HEIGHT && !placed; y++)
+                    for (byte y = 0; y < pageItems.height && !placed; y++)
                     {
-                        for (byte x = 0; x < PlayerInventory.WIDTH && !placed; x++)
+                        for (byte x = 0; x < pageItems.width && !placed; x++)
                         {
-                            if (inventory.getItem(page, x, y) == null)
+                            if (IsSlotFree(pageItems, x, y, snap.SizeX, snap.SizeY, snap.Rot))
                             {
-                                inventory.addItem(page, jar.item, true);
-                                inventory.sendSlot(page, x, y);
+                                pageItems.addItem(x, y, snap.Rot, snap.Item);
                                 placed = true;
                             }
                         }
                     }
                 }
 
-                if (!placed) remaining.Add(jar);
+                if (!placed)
+                {
+                    remaining.Add(snap);
+                }
             }
 
             return remaining;
@@ -161,38 +186,89 @@ namespace InventorySorter
 
         // ==================== 放回存储容器 ====================
 
-        private List<ItemJar> PlaceItemsInStorage(InteractableStorage storage, List<ItemJar> items)
+        private List<ItemSnapshot> PlaceInStorage(Items container, List<ItemSnapshot> snapshots)
         {
-            List<ItemJar> remaining = new List<ItemJar>();
+            List<ItemSnapshot> remaining = new List<ItemSnapshot>();
 
-            foreach (var jar in items)
+            foreach (var snap in snapshots)
             {
                 bool placed = false;
 
-                for (byte y = 0; y < storage.height && !placed; y++)
+                for (byte y = 0; y < container.height && !placed; y++)
                 {
-                    for (byte x = 0; x < storage.width && !placed; x++)
+                    for (byte x = 0; x < container.width && !placed; x++)
                     {
-                        if (storage.getItem(x, y) == null)
+                        if (IsSlotFree(container, x, y, snap.SizeX, snap.SizeY, snap.Rot))
                         {
-                            storage.addItem(jar.item, true);
+                            container.addItem(x, y, snap.Rot, snap.Item);
                             placed = true;
                         }
                     }
                 }
 
-                if (!placed) remaining.Add(jar);
+                if (!placed)
+                {
+                    remaining.Add(snap);
+                }
             }
 
             return remaining;
         }
 
+        // ==================== 辅助方法 ====================
+
+        private bool IsSlotFree(Items items, byte x, byte y, byte sizeX, byte sizeY, byte rot)
+        {
+            byte w = rot == 1 ? sizeY : sizeX;
+            byte h = rot == 1 ? sizeX : sizeY;
+
+            if (x + w > items.width || y + h > items.height) return false;
+
+            for (byte dy = 0; dy < h; dy++)
+            {
+                for (byte dx = 0; dx < w; dx++)
+                {
+                    foreach (var jar in items.items)
+                    {
+                        byte jarW = jar.rot == 1 ? jar.size_y : jar.size_x;
+                        byte jarH = jar.rot == 1 ? jar.size_x : jar.size_y;
+                        if ((byte)(x + dx) >= jar.x && (byte)(x + dx) < jar.x + jarW &&
+                            (byte)(y + dy) >= jar.y && (byte)(y + dy) < jar.y + jarH)
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
         private void DropItem(Player player, Item item)
         {
             if (item == null) return;
-            Vector3 position = player.transform.position;
-            position.y += 1f;
-            ItemManager.dropItem(item, position, true, false, true);
+            Vector3 pos = player.transform.position;
+            pos.y += 1f;
+            ItemManager.dropItem(item, pos, true, false, true);
+        }
+    }
+
+    // ==================== 物品快照 ====================
+
+    public class ItemSnapshot
+    {
+        public Item Item;
+        public byte OriginalPage;
+        public byte SizeX;
+        public byte SizeY;
+        public byte Rot;
+
+        public ItemSnapshot(ItemJar jar, byte page = 0)
+        {
+            Item = jar.item;
+            OriginalPage = page;
+            SizeX = jar.size_x;
+            SizeY = jar.size_y;
+            Rot = jar.rot;
         }
     }
 
@@ -202,7 +278,7 @@ namespace InventorySorter
     {
         public AllowedCaller AllowedCaller { get { return AllowedCaller.Player; } }
         public string Name { get { return "sortinv"; } }
-        public string Help { get { return "Sort your backpack and storage"; } }
+        public string Help { get { return "Sort your backpack inventory"; } }
         public string Syntax { get { return ""; } }
         public List<string> Aliases { get { return new List<string> { "sort" }; } }
         public List<string> Permissions { get { return new List<string>(); } }
@@ -221,7 +297,7 @@ namespace InventorySorter
     {
         public AllowedCaller AllowedCaller { get { return AllowedCaller.Player; } }
         public string Name { get { return "sortstorage"; } }
-        public string Help { get { return "Sort storage container"; } }
+        public string Help { get { return "Sort the open storage container"; } }
         public string Syntax { get { return ""; } }
         public List<string> Aliases { get { return new List<string> { "stsort" }; } }
         public List<string> Permissions { get { return new List<string>(); } }
