@@ -66,7 +66,7 @@ namespace InventorySorter
                 }
                 else
                 {
-                    ChatManager.serverSendMessage("No storage open!", Color.red, null, player.SteamPlayer(), EChatMode.SAY, null, true);
+                    ChatManager.serverSendMessage("[DEBUG] 5米内无存储容器", Color.yellow, null, player.SteamPlayer(), EChatMode.SAY, null, true);
                 }
             }
             else if (command == "debuginv")
@@ -81,13 +81,19 @@ namespace InventorySorter
             try
             {
                 InteractableStorage[] storages = Object.FindObjectsOfType<InteractableStorage>();
+                InteractableStorage nearest = null;
+                float nearestDist = 5f; // 5米内
                 foreach (InteractableStorage storage in storages)
                 {
-                    if (storage != null && storage.isOpen && storage.opener == player)
+                    if (storage == null) continue;
+                    float dist = Vector3.Distance(player.transform.position, storage.transform.position);
+                    if (dist < nearestDist)
                     {
-                        return storage;
+                        nearestDist = dist;
+                        nearest = storage;
                     }
                 }
+                return nearest;
             }
             catch { }
             return null;
@@ -307,9 +313,19 @@ namespace InventorySorter
 
             // 检查存储容器
             InteractableStorage found = Main.Instance.GetOpenStorage(player);
-            ChatManager.serverSendMessage(
-                "[DEBUG] 附近打开存储: " + (found == null ? "无" : "有! isOpen=" + found.isOpen), Color.cyan, null, unturnedPlayer.SteamPlayer(),
-                EChatMode.SAY, null, true);
+            if (found != null)
+            {
+                float dist = Vector3.Distance(player.transform.position, found.transform.position);
+                ChatManager.serverSendMessage(
+                    "[DEBUG] 最近存储: " + dist.ToString("F1") + "米 isOpen=" + found.isOpen, Color.cyan, null, unturnedPlayer.SteamPlayer(),
+                    EChatMode.SAY, null, true);
+            }
+            else
+            {
+                ChatManager.serverSendMessage(
+                    "[DEBUG] 5米内无存储容器", Color.cyan, null, unturnedPlayer.SteamPlayer(),
+                    EChatMode.SAY, null, true);
+            }
         }
     }
 
