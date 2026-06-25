@@ -16,13 +16,13 @@ namespace InventorySorter
         protected override void Load()
         {
             Instance = this;
-            Logger.Log("InventorySorter loaded! /sortinv | /sortstorage");
+            Rocket.Core.Logging.Logger.Log("InventorySorter loaded! /sortinv | /sortstorage");
         }
 
         protected override void Unload()
         {
             Instance = null;
-            Logger.Log("InventorySorter unloaded!");
+            Rocket.Core.Logging.Logger.Log("InventorySorter unloaded!");
         }
 
         // ==================== 命令入口 ====================
@@ -63,7 +63,7 @@ namespace InventorySorter
         private InteractableStorage GetOpenStorage(Player player)
         {
             if (player == null) return null;
-            Interactable interactable = player.interactable;
+            Interactable interactable = player.Player.interactable;
             if (interactable != null && interactable is InteractableStorage)
             {
                 InteractableStorage storage = interactable as InteractableStorage;
