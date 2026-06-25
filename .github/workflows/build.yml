@@ -28,6 +28,7 @@ jobs:
             /reference:Dependencies\Rocket.API.dll ^
             /reference:Dependencies\Rocket.Core.dll ^
             /reference:Dependencies\Rocket.Unturned.dll ^
+            /reference:Dependencies\UnityEngine.dll ^
             /reference:Dependencies\UnityEngine.CoreModule.dll ^
             /reference:Dependencies\netstandard.dll ^
             Main.cs
