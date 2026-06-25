@@ -93,6 +93,7 @@ namespace InventorySorter
                 foreach (InteractableStorage storage in storages)
                 {
                     if (storage == null) continue;
+                    if (!storage.isOpen) continue;
                     float dist = Vector3.Distance(player.transform.position, storage.transform.position);
                     if (dist < nearestDist)
                     {
