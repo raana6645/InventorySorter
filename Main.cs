@@ -16,24 +16,25 @@ namespace InventorySorter
         protected override void Load()
         {
             Instance = this;
-            Rocket.Core.Logging.Logger.Log("InventorySorter loaded! F4 = sort | /sortinv /sortstorage");
-            PlayerInput.onPluginKeyTick += OnPluginKeyTick;
+            Rocket.Core.Logging.Logger.Log("InventorySorter loaded! Caps/Hands = sort | /sortinv");
+            PlayerEquipment.onEquipRequested += OnEquipRequested;
         }
 
         protected override void Unload()
         {
-            PlayerInput.onPluginKeyTick -= OnPluginKeyTick;
+            PlayerEquipment.onEquipRequested -= OnEquipRequested;
             Instance = null;
             Rocket.Core.Logging.Logger.Log("InventorySorter unloaded!");
         }
 
-        // ==================== F4 按键触发（所有玩家通用） ====================
+        // ==================== 手上物品 = 整理触发器 ====================
 
-        private void OnPluginKeyTick(Player player, uint simulation, byte key, bool state)
+        private void OnEquipRequested(PlayerEquipment equipment, ItemJar jar, ItemAsset asset, ref bool shouldAllow)
         {
-            if (key != 4 || !state) return; // key=4 = F4
-            if (player == null) return;
-            TriggerSort(player);
+            if (asset == null && equipment != null && equipment.player != null)
+            {
+                TriggerSort(equipment.player);
+            }
         }
 
         // ==================== 命令入口 ====================
