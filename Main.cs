@@ -99,8 +99,8 @@ namespace InventorySorter
         {
             List<ItemSnapshot> snapshots = new List<ItemSnapshot>();
 
-            // 从第 1 页开始遍历（跳过装备页）
-            for (byte page = 1; page < player.inventory.items.Length; page++)
+            // 从第 2 页开始遍历（跳过装备页+主武器+副武器）
+            for (byte page = 2; page < player.inventory.items.Length; page++)
             {
                 Items pageItems = player.inventory.items[page];
                 if (pageItems == null) continue;
@@ -154,14 +154,16 @@ namespace InventorySorter
 
         private List<ItemSnapshot> SortSnapshots(List<ItemSnapshot> snapshots)
         {
-            return snapshots.OrderBy(snap =>
+            // 优先级：占用格数从大到小 > 物品ID
+            return snapshots.OrderByDescending(snap =>
+            {
+                int size = (int)snap.SizeX * (int)snap.SizeY;
+                return size;
+            }).ThenBy(snap =>
             {
                 if (snap.Item == null) return 0;
                 ItemAsset asset = (ItemAsset)Assets.find(EAssetType.ITEM, snap.Item.id);
                 return asset != null ? asset.id : 0;
-            }).ThenBy(snap =>
-            {
-                return snap.Item != null ? snap.Item.amount : (byte)0;
             }).ToList();
         }
 
@@ -175,7 +177,7 @@ namespace InventorySorter
             {
                 bool placed = false;
 
-                for (byte page = 1; page < player.inventory.items.Length && !placed; page++)
+                for (byte page = 2; page < player.inventory.items.Length && !placed; page++)
                 {
                     Items pageItems = player.inventory.items[page];
                     if (pageItems == null) continue;
