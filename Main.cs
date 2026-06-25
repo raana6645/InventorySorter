@@ -261,12 +261,12 @@ namespace InventorySorter
 
     public class SortInvCommand : IRocketCommand
     {
-        public AllowedCaller AllowedCaller => AllowedCaller.Player;
-        public string Name => "sortinv";
-        public string Help => "Sort your backpack inventory";
-        public string Syntax => "";
-        public List<string> Aliases => new List<string> { "sort" };
-        public List<string> Permissions => new List<string>();
+        public AllowedCaller AllowedCaller { get { return AllowedCaller.Player; } }
+        public string Name { get { return "sortinv"; } }
+        public string Help { get { return "Sort your backpack inventory"; } }
+        public string Syntax { get { return ""; } }
+        public List<string> Aliases { get { return new List<string> { "sort" }; } }
+        public List<string> Permissions { get { return new List<string>(); } }
 
         public void Execute(IRocketPlayer caller, string[] command)
         {
@@ -280,12 +280,12 @@ namespace InventorySorter
 
     public class SortStorageCommand : IRocketCommand
     {
-        public AllowedCaller AllowedCaller => AllowedCaller.Player;
-        public string Name => "sortstorage";
-        public string Help => "Sort the open storage container";
-        public string Syntax => "";
-        public List<string> Aliases => new List<string> { "stsort" };
-        public List<string> Permissions => new List<string>();
+        public AllowedCaller AllowedCaller { get { return AllowedCaller.Player; } }
+        public string Name { get { return "sortstorage"; } }
+        public string Help { get { return "Sort the open storage container"; } }
+        public string Syntax { get { return ""; } }
+        public List<string> Aliases { get { return new List<string> { "stsort" }; } }
+        public List<string> Permissions { get { return new List<string>(); } }
 
         public void Execute(IRocketPlayer caller, string[] command)
         {
