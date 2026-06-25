@@ -16,13 +16,26 @@ namespace InventorySorter
         protected override void Load()
         {
             Instance = this;
-            Rocket.Core.Logging.Logger.Log("InventorySorter loaded! /sortinv | /sortstorage");
+            Logger.Log("InventorySorter loaded! Key: F4 | /sortinv /sortstorage");
         }
 
         protected override void Unload()
         {
             Instance = null;
-            Rocket.Core.Logging.Logger.Log("InventorySorter unloaded!");
+            Logger.Log("InventorySorter unloaded!");
+        }
+
+        // ==================== 按键触发 ====================
+
+        void Update()
+        {
+            // F4 键触发（仅本地/监听服务器有效，专用服务器无效）
+            if (!Input.GetKeyDown(KeyCode.F4) || Provider.isPvP) return;
+
+            Player player = Player.player;
+            if (player == null) return;
+
+            TriggerSort(player);
         }
 
         // ==================== 命令入口 ====================
@@ -31,58 +44,52 @@ namespace InventorySorter
         {
             if (player == null) return;
             Player p = player.Player;
-            if (p == null)
+            if (p == null) return;
+
+            if (command == "sortinv" || command == "sort")
             {
-                Rocket.Core.Logging.Logger.Log("[DEBUG] ExecuteCommand: player.Player is null");
-                return;
+                TriggerSort(p);
             }
-
-            ChatManager.serverSendMessage(
-                "[DEBUG] 收到命令: " + command, Color.yellow, null, player.SteamPlayer(),
-                EChatMode.SAY, null, true);
-
-            InteractableStorage storage = GetOpenStorage(p);
-
-            if (command == "sortinv")
+            else if (command == "sortstorage" || command == "stsort")
             {
+                InteractableStorage storage = GetNearestStorage(p);
                 if (storage != null)
+                {
+                    SortStorage(storage);
+                }
+                else
                 {
                     ChatManager.serverSendMessage(
-                        "[DEBUG] 检测到打开存储容器，改为整理容器", Color.yellow, null, player.SteamPlayer(),
+                        "附近无存储容器", Color.yellow, null, player.SteamPlayer(),
                         EChatMode.SAY, null, true);
-                    SortStorage(storage);
                 }
-                else
-                {
-                    SortBackpack(p);
-                }
-            }
-            else if (command == "sortstorage")
-            {
-                if (storage != null)
-                {
-                    SortStorage(storage);
-                    ChatManager.serverSendMessage("Storage sorted!", Color.green, null, player.SteamPlayer(), EChatMode.SAY, null, true);
-                }
-                else
-                {
-                    ChatManager.serverSendMessage("[DEBUG] 5米内无存储容器", Color.yellow, null, player.SteamPlayer(), EChatMode.SAY, null, true);
-                }
-            }
-            else if (command == "debuginv")
-            {
-                DebugInventory(player, p);
             }
         }
 
-        private InteractableStorage GetOpenStorage(Player player)
+        private void TriggerSort(Player player)
+        {
+            InteractableStorage storage = GetNearestStorage(player);
+
+            if (storage != null)
+            {
+                SortStorage(storage);
+            }
+            else
+            {
+                SortBackpack(player);
+            }
+        }
+
+        // ==================== 存储容器检测 ====================
+
+        private InteractableStorage GetNearestStorage(Player player)
         {
             if (player == null) return null;
             try
             {
                 InteractableStorage[] storages = Object.FindObjectsOfType<InteractableStorage>();
                 InteractableStorage nearest = null;
-                float nearestDist = 5f; // 5米内
+                float nearestDist = 5f;
                 foreach (InteractableStorage storage in storages)
                 {
                     if (storage == null) continue;
@@ -105,7 +112,7 @@ namespace InventorySorter
         {
             List<ItemSnapshot> snapshots = new List<ItemSnapshot>();
 
-            // 从第 2 页开始遍历（跳过装备页+主武器+副武器）
+            // 从第 2 页开始（跳过装备页+主武器+副武器）
             for (byte page = 2; page < player.inventory.items.Length; page++)
             {
                 Items pageItems = player.inventory.items[page];
@@ -276,57 +283,6 @@ namespace InventorySorter
             pos.y += 1f;
             ItemManager.dropItem(item, pos, true, false, true);
         }
-
-        // ==================== 调试方法 ====================
-
-        private void DebugInventory(UnturnedPlayer unturnedPlayer, Player player)
-        {
-            ChatManager.serverSendMessage(
-                "[DEBUG] === 背包状态 ===", Color.cyan, null, unturnedPlayer.SteamPlayer(),
-                EChatMode.SAY, null, true);
-
-            ChatManager.serverSendMessage(
-                "[DEBUG] 总页数: " + player.inventory.items.Length, Color.cyan, null, unturnedPlayer.SteamPlayer(),
-                EChatMode.SAY, null, true);
-
-            int totalItems = 0;
-            for (byte page = 0; page < player.inventory.items.Length; page++)
-            {
-                Items pageItems = player.inventory.items[page];
-                if (pageItems == null)
-                {
-                    ChatManager.serverSendMessage(
-                        "[DEBUG] 页" + page + ": NULL", Color.cyan, null, unturnedPlayer.SteamPlayer(),
-                        EChatMode.SAY, null, true);
-                    continue;
-                }
-                int count = pageItems.items.Count;
-                totalItems += count;
-                ChatManager.serverSendMessage(
-                    "[DEBUG] 页" + page + " (" + pageItems.width + "x" + pageItems.height + "): " + count + " 物品", Color.cyan, null, unturnedPlayer.SteamPlayer(),
-                    EChatMode.SAY, null, true);
-            }
-
-            ChatManager.serverSendMessage(
-                "[DEBUG] 总物品数: " + totalItems, Color.cyan, null, unturnedPlayer.SteamPlayer(),
-                EChatMode.SAY, null, true);
-
-            // 检查存储容器
-            InteractableStorage found = Main.Instance.GetOpenStorage(player);
-            if (found != null)
-            {
-                float dist = Vector3.Distance(player.transform.position, found.transform.position);
-                ChatManager.serverSendMessage(
-                    "[DEBUG] 最近存储: " + dist.ToString("F1") + "米 isOpen=" + found.isOpen, Color.cyan, null, unturnedPlayer.SteamPlayer(),
-                    EChatMode.SAY, null, true);
-            }
-            else
-            {
-                ChatManager.serverSendMessage(
-                    "[DEBUG] 5米内无存储容器", Color.cyan, null, unturnedPlayer.SteamPlayer(),
-                    EChatMode.SAY, null, true);
-            }
-        }
     }
 
     // ==================== 物品快照 ====================
@@ -355,7 +311,7 @@ namespace InventorySorter
     {
         public AllowedCaller AllowedCaller { get { return AllowedCaller.Player; } }
         public string Name { get { return "sortinv"; } }
-        public string Help { get { return "Sort your backpack inventory"; } }
+        public string Help { get { return "Sort backpack (auto-detects storage)"; } }
         public string Syntax { get { return ""; } }
         public List<string> Aliases { get { return new List<string> { "sort" }; } }
         public List<string> Permissions { get { return new List<string>(); } }
@@ -374,7 +330,7 @@ namespace InventorySorter
     {
         public AllowedCaller AllowedCaller { get { return AllowedCaller.Player; } }
         public string Name { get { return "sortstorage"; } }
-        public string Help { get { return "Sort the open storage container"; } }
+        public string Help { get { return "Sort nearby storage container"; } }
         public string Syntax { get { return ""; } }
         public List<string> Aliases { get { return new List<string> { "stsort" }; } }
         public List<string> Permissions { get { return new List<string>(); } }
@@ -385,25 +341,6 @@ namespace InventorySorter
             if (player != null && Main.Instance != null)
             {
                 Main.Instance.ExecuteCommand(player, "sortstorage");
-            }
-        }
-    }
-
-    public class DebugInvCommand : IRocketCommand
-    {
-        public AllowedCaller AllowedCaller { get { return AllowedCaller.Player; } }
-        public string Name { get { return "debuginv"; } }
-        public string Help { get { return "Show inventory debug info"; } }
-        public string Syntax { get { return ""; } }
-        public List<string> Aliases { get { return new List<string> { "di" }; } }
-        public List<string> Permissions { get { return new List<string>(); } }
-
-        public void Execute(IRocketPlayer caller, string[] command)
-        {
-            UnturnedPlayer player = caller as UnturnedPlayer;
-            if (player != null && Main.Instance != null)
-            {
-                Main.Instance.ExecuteCommand(player, "debuginv");
             }
         }
     }
