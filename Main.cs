@@ -78,15 +78,18 @@ namespace InventorySorter
         private InteractableStorage GetOpenStorage(Player player)
         {
             if (player == null) return null;
-            Interactable interactable = player.player.interactable;
-            if (interactable != null && interactable is InteractableStorage)
+            try
             {
-                InteractableStorage storage = interactable as InteractableStorage;
-                if (storage != null && storage.isOpen && storage.opener == player)
+                InteractableStorage[] storages = Object.FindObjectsOfType<InteractableStorage>();
+                foreach (InteractableStorage storage in storages)
                 {
-                    return storage;
+                    if (storage != null && storage.isOpen && storage.opener == player)
+                    {
+                        return storage;
+                    }
                 }
             }
+            catch { }
             return null;
         }
 
@@ -301,18 +304,10 @@ namespace InventorySorter
                 EChatMode.SAY, null, true);
 
             // 检查存储容器
-            Interactable interactable = player.player.interactable;
+            InteractableStorage found = Main.Instance.GetOpenStorage(player);
             ChatManager.serverSendMessage(
-                "[DEBUG] player.player.interactable: " + (interactable == null ? "null" : interactable.GetType().Name), Color.cyan, null, unturnedPlayer.SteamPlayer(),
+                "[DEBUG] 附近打开存储: " + (found == null ? "无" : "有! isOpen=" + found.isOpen), Color.cyan, null, unturnedPlayer.SteamPlayer(),
                 EChatMode.SAY, null, true);
-
-            if (interactable is InteractableStorage)
-            {
-                InteractableStorage storage = interactable as InteractableStorage;
-                ChatManager.serverSendMessage(
-                    "[DEBUG] 存储容器: isOpen=" + storage.isOpen + " opener=" + (storage.opener == player ? "自己" : "他人"), Color.cyan, null, unturnedPlayer.SteamPlayer(),
-                    EChatMode.SAY, null, true);
-            }
         }
     }
 
