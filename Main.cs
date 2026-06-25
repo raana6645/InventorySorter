@@ -1,8 +1,10 @@
 using Rocket.API;
+using Rocket.Core.Commands;
+using Rocket.Core.Logging;
 using Rocket.Core.Plugins;
-using Rocket.Unturned.Events;
 using Rocket.Unturned.Player;
 using SDG.Unturned;
+using Steamworks;
 using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
@@ -16,99 +18,85 @@ namespace InventorySorter
         protected override void Load()
         {
             Instance = this;
-            UnturnedPlayerEvents.OnPlayerInventoryDrag += OnPlayerInventoryDrag;
-            Logger.Log("InventorySorter loaded!");
+            RocketCommandManager.RegisterCommand(this, new SortInvCommand());
+            RocketCommandManager.RegisterCommand(this, new SortStorageCommand());
+            Logger.Log("InventorySorter loaded! /sortinv | /sortstorage");
         }
 
         protected override void Unload()
         {
-            UnturnedPlayerEvents.OnPlayerInventoryDrag -= OnPlayerInventoryDrag;
+            Instance = null;
             Logger.Log("InventorySorter unloaded!");
         }
 
-        private void OnPlayerInventoryDrag(UnturnedPlayer player, ItemJar from, ItemJar to)
+        // 命令调用入口
+        public void ExecuteCommand(UnturnedPlayer player, string command)
         {
-            if (from == null || to == null) return;
-            if (from.x != 0 || from.y != 0) return;
-            if (to.x != 0 || to.y != 0) return;
-
+            if (player == null) return;
             Player p = player.Player;
             if (p == null) return;
 
             InteractableStorage storage = GetOpenStorage(p);
-            if (storage != null)
+
+            if (command == "sortinv")
             {
-                SortStorage(storage);
-            }
-            else
-            {
-                SortBackpack(p);
-            }
-        }
-
-        private InteractableStorage GetOpenStorage(Player player)
-        {
-            // 检测玩家当前打开的存储容器
-            if (player.interactableStorage != null &&
-                player.interactableStorage.isOpen &&
-                player.interactableStorage.opener == player)
-            {
-                return player.interactableStorage;
-            }
-            return null;
-        }
-
-        // ==================== 背包排序 ====================
-
-        public void SortBackpack(Player player)
-        {
-            List<ItemJarSnapshot> items = new List<ItemJarSnapshot>();
-
-            // 遍历所有页面（跳过快键槽页面 SLOTS）
-            for (byte page = PlayerInventory.SLOTS; page < PlayerInventory.STORAGE; page++)
-            {
-                Items pageItems = player.inventory.items[page];
-                if (pageItems == null) continue;
-
-                // 收集快照并移除
-                foreach (var jar in pageItems.items.ToList())
+                if (storage != null)
                 {
-                    items.Add(new ItemJarSnapshot(jar, page));
-                    pageItems.removeItem(pageItems.items.IndexOf(jar));
+                    SortStorage(storage);
+                }
+                else
+                {
+                    SortBackpack(p);
                 }
             }
-
-            items = SortItems(items);
-            List<ItemJarSnapshot> remaining = PlaceItemsBack(player, items);
-
-            foreach (var snap in remaining)
+            else if (command == "sortstorage")
             {
-                DropItem(player, snap.Item);
+                if (storage != null)
+                {
+                    SortStorage(storage);
+                    ChatManager.serverSendMessage("Storage sorted!", Color.green, null, player.SteamPlayer(), EChatMode.SAY, null, true);
+                }
+                else
+                {
+                    ChatManager.serverSendMessage("No storage open!", Color.red, null, player.SteamPlayer(), EChatMode.SAY, null, true);
+                }
             }
         }
 
-        // ==================== 存储容器排序 ====================
+        // ==================== 公有 API ====================
 
         public void SortStorage(InteractableStorage storage)
         {
-            Items storageItems = storage.items;
-            Player player = storage.opener;
-            List<ItemJarSnapshot> items = new List<ItemJarSnapshot>();
+            if (storage == null) return;
 
-            // 收集快照并移除
-            foreach (var jar in storageItems.items.ToList())
+            Items storageItems = storage.items;
+            if (storageItems == null) return;
+
+            Player player = storage.opener;
+            List<ItemSnapshot> snapshots = new List<ItemSnapshot>();
+
+            // 收集物品快照
+            var jarList = new List<ItemJar>(storageItems.items);
+            foreach (var jar in jarList)
             {
-                items.Add(new ItemJarSnapshot(jar));
-                storageItems.removeItem(storageItems.items.IndexOf(jar));
+                snapshots.Add(new ItemSnapshot(jar));
+                int index = storageItems.items.IndexOf(jar);
+                if (index >= 0)
+                {
+                    storageItems.removeItem((byte)index);
+                }
             }
 
-            items = SortItems(items);
-            List<ItemJarSnapshot> remainingItems = PlaceItemsInStorage(storageItems, items);
+            // 排序
+            snapshots = SortSnapshots(snapshots);
 
-            // 剩余的放回背包
-            if (remainingItems.Count > 0 && player != null)
+            // 放回存储容器
+            List<ItemSnapshot> remaining = PlaceInItems(storageItems, snapshots);
+
+            // 剩余放入背包
+            if (remaining.Count > 0 && player != null)
             {
-                List<ItemJarSnapshot> backpackRemaining = PlaceItemsBack(player, remainingItems);
+                List<ItemSnapshot> backpackRemaining = PlaceInBackpack(player, remaining);
 
                 foreach (var snap in backpackRemaining)
                 {
@@ -117,112 +105,154 @@ namespace InventorySorter
             }
         }
 
+        public void SortBackpack(Player player)
+        {
+            if (player == null) return;
+
+            List<ItemSnapshot> snapshots = new List<ItemSnapshot>();
+
+            // 收集所有背包页面的物品
+            for (byte page = PlayerInventory.SLOTS; page < PlayerInventory.STORAGE; page++)
+            {
+                Items pageItems = player.inventory.items[page];
+                if (pageItems == null) continue;
+
+                var jarList = new List<ItemJar>(pageItems.items);
+                foreach (var jar in jarList)
+                {
+                    snapshots.Add(new ItemSnapshot(jar, page));
+                    int index = pageItems.items.IndexOf(jar);
+                    if (index >= 0)
+                    {
+                        pageItems.removeItem((byte)index);
+                    }
+                }
+            }
+
+            // 排序并放回
+            snapshots = SortSnapshots(snapshots);
+            List<ItemSnapshot> remaining = PlaceInBackpack(player, snapshots);
+
+            // 放不下的丢弃
+            foreach (var snap in remaining)
+            {
+                DropItem(player, snap.Item);
+            }
+        }
+
         // ==================== 排序逻辑 ====================
 
-        private List<ItemJarSnapshot> SortItems(List<ItemJarSnapshot> items)
+        private List<ItemSnapshot> SortSnapshots(List<ItemSnapshot> snaps)
         {
-            return items.OrderBy(snap =>
+            return snaps.OrderBy(s =>
             {
-                if (snap.Item == null) return 0;
-                ItemAsset asset = (ItemAsset)Assets.find(EAssetType.ITEM, snap.Item.id);
-                return asset != null ? asset.id : 0;
-            }).ThenBy(snap =>
+                if (s.Item == null) return 0;
+                return s.Item.id;
+            }).ThenBy(s =>
             {
-                return snap.Item != null ? snap.Item.amount : (byte)0;
+                return s.Item != null ? s.Item.amount : (byte)0;
             }).ToList();
         }
 
-        // ==================== 放回背包 ====================
+        // ==================== 放置逻辑 ====================
 
-        private List<ItemJarSnapshot> PlaceItemsBack(Player player, List<ItemJarSnapshot> items)
+        private List<ItemSnapshot> PlaceInBackpack(Player player, List<ItemSnapshot> snaps)
         {
-            List<ItemJarSnapshot> remaining = new List<ItemJarSnapshot>();
+            List<ItemSnapshot> remaining = new List<ItemSnapshot>(snaps);
 
-            foreach (var snap in items)
+            for (byte page = PlayerInventory.SLOTS; page < PlayerInventory.STORAGE; page++)
             {
-                bool placed = false;
+                Items pageItems = player.inventory.items[page];
+                if (pageItems == null) continue;
 
-                for (byte page = PlayerInventory.SLOTS; page < PlayerInventory.STORAGE && !placed; page++)
+                List<ItemSnapshot> stillRemaining = new List<ItemSnapshot>();
+                foreach (var snap in remaining)
                 {
-                    Items pageItems = player.inventory.items[page];
-                    if (pageItems == null) continue;
-
-                    // 尝试在 (0,0) 位置添加——Items.addItem 会自动处理旋转
-                    // 遍历找到第一个空位
-                    for (byte y = 0; y < pageItems.height && !placed; y++)
+                    if (!TryAddToItems(pageItems, snap))
                     {
-                        for (byte x = 0; x < pageItems.width && !placed; x++)
-                        {
-                            if (IsPositionFree(pageItems, x, y, snap.SizeX, snap.SizeY, snap.Rot))
-                            {
-                                pageItems.addItem(x, y, snap.Rot, snap.Item);
-                                placed = true;
-                            }
-                        }
+                        stillRemaining.Add(snap);
                     }
                 }
-
-                if (!placed)
-                {
-                    remaining.Add(snap);
-                }
+                remaining = stillRemaining;
+                if (remaining.Count == 0) break;
             }
 
             return remaining;
         }
 
-        // ==================== 放回存储容器 ====================
-
-        private List<ItemJarSnapshot> PlaceItemsInStorage(Items storageItems, List<ItemJarSnapshot> items)
+        private List<ItemSnapshot> PlaceInItems(Items items, List<ItemSnapshot> snaps)
         {
-            List<ItemJarSnapshot> remaining = new List<ItemJarSnapshot>();
-
-            foreach (var snap in items)
+            List<ItemSnapshot> remaining = new List<ItemSnapshot>();
+            foreach (var snap in snaps)
             {
-                bool placed = false;
-
-                for (byte y = 0; y < storageItems.height && !placed; y++)
-                {
-                    for (byte x = 0; x < storageItems.width && !placed; x++)
-                    {
-                        if (IsPositionFree(storageItems, x, y, snap.SizeX, snap.SizeY, snap.Rot))
-                        {
-                            storageItems.addItem(x, y, snap.Rot, snap.Item);
-                            placed = true;
-                        }
-                    }
-                }
-
-                if (!placed)
+                if (!TryAddToItems(items, snap))
                 {
                     remaining.Add(snap);
                 }
             }
-
             return remaining;
+        }
+
+        private bool TryAddToItems(Items items, ItemSnapshot snap)
+        {
+            for (byte y = 0; y < items.height; y++)
+            {
+                for (byte x = 0; x < items.width; x++)
+                {
+                    if (IsPositionFree(items, (byte)x, (byte)y, snap.SizeX, snap.SizeY, snap.Rot))
+                    {
+                        items.addItem((byte)x, (byte)y, snap.Rot, snap.Item);
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         // ==================== 辅助方法 ====================
 
+        private InteractableStorage GetOpenStorage(Player player)
+        {
+            if (player == null) return null;
+
+            // 尝试通过 Player 的交互对象检测
+            try
+            {
+                Interactable interactable = player.interactable;
+                if (interactable != null && interactable is InteractableStorage)
+                {
+                    InteractableStorage storage = interactable as InteractableStorage;
+                    if (storage != null && storage.isOpen && storage.opener == player)
+                    {
+                        return storage;
+                    }
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
         private bool IsPositionFree(Items items, byte x, byte y, byte sizeX, byte sizeY, byte rot)
         {
-            // 旋转：rot=1 时交换宽高
             byte w = rot == 1 ? sizeY : sizeX;
             byte h = rot == 1 ? sizeX : sizeY;
 
-            if (x + w > items.width || y + h > items.height) return false;
+            if ((byte)(x + w) > items.width || (byte)(y + h) > items.height) return false;
 
-            for (byte dy = 0; dy < h; dy++)
+            foreach (var jar in items.items)
             {
-                for (byte dx = 0; dx < w; dx++)
+                byte jarW = jar.rot == 1 ? jar.size_y : jar.size_x;
+                byte jarH = jar.rot == 1 ? jar.size_x : jar.size_y;
+
+                for (byte dy = 0; dy < h; dy++)
                 {
-                    // 检查该位置是否被占用
-                    foreach (var jar in items.items)
+                    for (byte dx = 0; dx < w; dx++)
                     {
-                        byte jarW = jar.rot == 1 ? jar.size_y : jar.size_x;
-                        byte jarH = jar.rot == 1 ? jar.size_x : jar.size_y;
-                        if ((byte)(x + dx) >= jar.x && (byte)(x + dx) < jar.x + jarW &&
-                            (byte)(y + dy) >= jar.y && (byte)(y + dy) < jar.y + jarH)
+                        byte checkX = (byte)(x + dx);
+                        byte checkY = (byte)(y + dy);
+                        if (checkX >= jar.x && checkX < (byte)(jar.x + jarW) &&
+                            checkY >= jar.y && checkY < (byte)(jar.y + jarH))
                         {
                             return false;
                         }
@@ -234,19 +264,18 @@ namespace InventorySorter
 
         private void DropItem(Player player, Item item)
         {
-            if (item == null) return;
+            if (item == null || player == null) return;
 
-            Vector3 position = player.transform.position;
-            position.y += 1f;
-
-            ItemManager.dropItem(item, position, true, false, true);
+            Vector3 pos = player.transform.position;
+            pos.y += 1f;
+            ItemManager.dropItem(item, pos, true, false, true);
         }
     }
 
     /// <summary>
-    /// 物品快照——保存排序前的物品和位置信息
+    /// 物品快照
     /// </summary>
-    public class ItemJarSnapshot
+    public class ItemSnapshot
     {
         public Item Item;
         public byte OriginalPage;
@@ -254,13 +283,53 @@ namespace InventorySorter
         public byte SizeY;
         public byte Rot;
 
-        public ItemJarSnapshot(ItemJar jar, byte page = 0)
+        public ItemSnapshot(ItemJar jar, byte page = 0)
         {
             Item = jar.item;
             OriginalPage = page;
             SizeX = jar.size_x;
             SizeY = jar.size_y;
             Rot = jar.rot;
+        }
+    }
+
+    // ==================== 命令类 ====================
+
+    public class SortInvCommand : IRocketCommand
+    {
+        public AllowedCaller AllowedCaller => AllowedCaller.Player;
+        public string Name => "sortinv";
+        public string Help => "Sort your backpack inventory";
+        public string Syntax => "";
+        public List<string> Aliases => new List<string> { "sort" };
+        public List<string> Permissions => new List<string>();
+
+        public void Execute(IRocketPlayer caller, string[] command)
+        {
+            UnturnedPlayer player = caller as UnturnedPlayer;
+            if (player != null && Main.Instance != null)
+            {
+                Main.Instance.ExecuteCommand(player, "sortinv");
+            }
+        }
+    }
+
+    public class SortStorageCommand : IRocketCommand
+    {
+        public AllowedCaller AllowedCaller => AllowedCaller.Player;
+        public string Name => "sortstorage";
+        public string Help => "Sort the open storage container";
+        public string Syntax => "";
+        public List<string> Aliases => new List<string> { "stsort" };
+        public List<string> Permissions => new List<string>();
+
+        public void Execute(IRocketPlayer caller, string[] command)
+        {
+            UnturnedPlayer player = caller as UnturnedPlayer;
+            if (player != null && Main.Instance != null)
+            {
+                Main.Instance.ExecuteCommand(player, "sortstorage");
+            }
         }
     }
 }
